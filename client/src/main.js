@@ -447,6 +447,7 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'))
     btn.classList.add('active')
     activeCalMode = btn.dataset.mode
+    stopScan()
     renderCalibration()
   })
 })
@@ -505,7 +506,7 @@ async function renderCalibration() {
     `
   }).join('')
 
-  // Save handlers
+  // Manual save handlers
   tbody.querySelectorAll('.btn-save-patch').forEach(btn => {
     btn.addEventListener('click', async () => {
       const row = btn.closest('tr')
@@ -523,13 +524,17 @@ async function renderCalibration() {
     })
   })
 
-  // Tab key moves to next row's L* input
+  // Tab/Enter on b* — advance to next row, or in scan mode auto-save and advance
   tbody.querySelectorAll('.cal-b').forEach((input, i) => {
-    input.addEventListener('keydown', e => {
-      if (e.key === 'Tab' && !e.shiftKey) {
+    input.addEventListener('keydown', async e => {
+      if ((e.key === 'Tab' && !e.shiftKey) || e.key === 'Enter') {
         e.preventDefault()
-        const nextL = tbody.querySelectorAll('.cal-l')[i + 1]
-        if (nextL) nextL.focus()
+        if (scanActive) {
+          await advanceScan()
+        } else {
+          const nextL = tbody.querySelectorAll('.cal-l')[i + 1]
+          if (nextL) nextL.focus()
+        }
       }
     })
   })
@@ -538,9 +543,114 @@ async function renderCalibration() {
 document.getElementById('btn-clear-cal').addEventListener('click', async () => {
   const modeLabel = activeCalMode.toUpperCase()
   if (!confirm(`Clear all ${modeLabel} measurements for this printer? This cannot be undone.`)) return
+  stopScan()
   await api.delete(`/api/calibration/${state.activePrinterId}/${activeCalMode}/patches`)
   renderCalibration()
 })
+
+// ── Scan mode ─────────────────────────────────────────────────────────────
+// Designed for use with X-Rite DataCatcher (keyboard wedge mode).
+// DataCatcher injects L → Tab → a → Tab → b → Tab/Enter as keystrokes.
+// Scan mode keeps focus on the current row's L* field, auto-saves when
+// Tab/Enter is received on b*, and advances to the next patch.
+
+let scanActive = false
+let scanPos = 0
+
+function getScanRows() {
+  return Array.from(document.getElementById('cal-tbody').querySelectorAll('tr'))
+}
+
+function startScan() {
+  const rows = getScanRows()
+  if (!rows.length) return
+  // Start from first unmeasured patch
+  const firstUnmeasured = rows.findIndex(r => !r.classList.contains('measured'))
+  scanPos = firstUnmeasured >= 0 ? firstUnmeasured : 0
+  scanActive = true
+  document.getElementById('btn-start-scan').textContent = '⏹ Stop'
+  document.getElementById('btn-start-scan').classList.add('scanning')
+  activateScanRow()
+}
+
+function stopScan() {
+  scanActive = false
+  getScanRows().forEach(r => r.classList.remove('scan-active'))
+  document.getElementById('scan-toolbar').style.display = 'none'
+  const btn = document.getElementById('btn-start-scan')
+  if (btn) { btn.textContent = '▶ Scan'; btn.classList.remove('scanning') }
+}
+
+function activateScanRow() {
+  const rows = getScanRows()
+  rows.forEach(r => r.classList.remove('scan-active'))
+
+  if (scanPos >= rows.length) { stopScan(); return }
+
+  const row = rows[scanPos]
+  row.classList.add('scan-active')
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+
+  const lInput = row.querySelector('.cal-l')
+  if (lInput) { lInput.focus(); lInput.select() }
+
+  // Toolbar
+  const toolbar = document.getElementById('scan-toolbar')
+  toolbar.style.display = 'flex'
+  document.getElementById('scan-counter').textContent = `Patch ${scanPos + 1} of ${rows.length}`
+  const statusEl = document.getElementById('scan-status')
+  statusEl.textContent = row.classList.contains('measured') ? '(already measured — will overwrite)' : ''
+}
+
+async function saveScanCurrent() {
+  const rows = getScanRows()
+  if (scanPos >= rows.length) return false
+  const row = rows[scanPos]
+  const l = parseFloat(row.querySelector('.cal-l').value)
+  const a = parseFloat(row.querySelector('.cal-a').value)
+  const b = parseFloat(row.querySelector('.cal-b').value)
+  if (isNaN(l) || isNaN(a) || isNaN(b)) return false
+
+  const patchId = row.dataset.patchId
+  await api.post(
+    `/api/calibration/${state.activePrinterId}/${activeCalMode}/patches/${patchId}`,
+    { measured_l: l, measured_a: a, measured_b: b }
+  )
+
+  row.classList.add('measured')
+  row.classList.remove('scan-active')
+  const btn = row.querySelector('.btn-save-patch')
+  if (btn) { btn.textContent = '✓'; btn.classList.add('saved') }
+
+  // Update progress bar in place (no full re-render)
+  const allRows = getScanRows()
+  const measuredCount = allRows.filter(r => r.classList.contains('measured')).length
+  const total = allRows.length
+  document.getElementById('cal-progress-fill').style.width = (measuredCount / total * 100) + '%'
+  document.getElementById('cal-progress-label').textContent = `${measuredCount} / ${total} patches measured`
+
+  return true
+}
+
+async function advanceScan() {
+  await saveScanCurrent()
+  scanPos++
+  if (scanPos >= getScanRows().length) { stopScan(); return }
+  activateScanRow()
+}
+
+function skipScan() {
+  scanPos++
+  if (scanPos >= getScanRows().length) { stopScan(); return }
+  activateScanRow()
+}
+
+document.getElementById('btn-start-scan').addEventListener('click', () => {
+  if (scanActive) stopScan()
+  else startScan()
+})
+document.getElementById('btn-scan-skip').addEventListener('click', skipScan)
+document.getElementById('btn-scan-stop').addEventListener('click', stopScan)
 
 // ── Chart upload status ───────────────────────────────────────────────────
 async function refreshChartStatus() {

@@ -1,35 +1,21 @@
 import PDFDocument from 'pdfkit'
 
-// LAB → approximate RGB for swatch rendering
-function labToRgb(L, a, b) {
-  let y = (L + 16) / 116
-  let x = a / 500 + y
-  let z = y - b / 200
-  x = (Math.pow(x, 3) > 0.008856 ? Math.pow(x, 3) : (x - 16/116) / 7.787) * 0.95047
-  y = (Math.pow(y, 3) > 0.008856 ? Math.pow(y, 3) : (y - 16/116) / 7.787) * 1.00000
-  z = (Math.pow(z, 3) > 0.008856 ? Math.pow(z, 3) : (z - 16/116) / 7.787) * 1.08883
-  let r =  x * 3.2406 + y * -1.5372 + z * -0.4986
-  let g =  x * -0.9689 + y * 1.8758 + z *  0.0415
-  let bv = x *  0.0557 + y * -0.2040 + z *  1.0570
-  const gc = v => Math.round(Math.min(255, Math.max(0, (v > 0.0031308 ? 1.055 * Math.pow(v, 1/2.4) - 0.055 : 12.92 * v) * 255)))
-  return [gc(r), gc(g), gc(bv)]
-}
-
-// Approximate CMYKOG → LAB via a simple CMY→RGB then RGB→LAB
-// Good enough for swatch rendering, not for measurement
-function cmykogToApproxRgb(c, m, y, k, o, g) {
-  // Blend O into M+Y, G into C+Y channels approximately
+// Returns { mode: 'cmyk', value: [c,m,y,k] } for pure CMYK patches,
+// or { mode: 'rgb', value: [r,g,b] } for patches using O or G (approximated).
+// pdfkit accepts CMYK as an array of 4 values 0–1, which produces true device CMYK
+// in the PDF — no colour management conversion when opened in Illustrator etc.
+function swatchColour(c, m, y, k, o, g) {
+  if (o === 0 && g === 0) {
+    return { mode: 'cmyk', value: [c/100, m/100, y/100, k/100] }
+  }
+  // O/G channels can't be represented in CMYK — approximate visually
   const mc = Math.min(100, m + o * 0.6)
   const yc = Math.min(100, y + o * 0.4 + g * 0.3)
   const cc = Math.min(100, c + g * 0.7)
-  const r = Math.round(255 * (1 - cc/100) * (1 - k/100))
-  const gv = Math.round(255 * (1 - mc/100) * (1 - k/100))
-  const b = Math.round(255 * (1 - yc/100) * (1 - k/100))
-  return [
-    Math.max(0, Math.min(255, r)),
-    Math.max(0, Math.min(255, gv)),
-    Math.max(0, Math.min(255, b))
-  ]
+  const r = Math.max(0, Math.min(255, Math.round(255 * (1 - cc/100) * (1 - k/100))))
+  const gv = Math.max(0, Math.min(255, Math.round(255 * (1 - mc/100) * (1 - k/100))))
+  const b = Math.max(0, Math.min(255, Math.round(255 * (1 - yc/100) * (1 - k/100))))
+  return { mode: 'rgb', value: [r, gv, b] }
 }
 
 function recipeLabel(p) {
@@ -97,18 +83,21 @@ export function generateCalibrationPDF(printer, patches, outputStream) {
     const x   = GRID_X + col * cellW
     const y   = GRID_Y + row * cellH
 
-    const [r, g, b] = cmykogToApproxRgb(p.c, p.m, p.y, p.k, p.o, p.g)
+    const sc = swatchColour(p.c, p.m, p.y, p.k, p.o, p.g)
 
     // Swatch
     doc.rect(x + 1, y + 1, cellW - 2, SWATCH_H - 1)
-       .fillColor([r, g, b]).fill()
+       .fillColor(sc.value).fill()
 
     // Border
     doc.rect(x + 1, y + 1, cellW - 2, cellH - 2)
        .lineWidth(0.3).strokeColor('#cccccc').stroke()
 
-    // Patch ID
-    const idColor = (r + g + b) / 3 < 100 ? '#ffffff' : '#111111'
+    // Patch ID — determine brightness for text contrast
+    const [pr, pg, pb] = sc.mode === 'cmyk'
+      ? [255*(1-sc.value[0])*(1-sc.value[3]), 255*(1-sc.value[1])*(1-sc.value[3]), 255*(1-sc.value[2])*(1-sc.value[3])]
+      : sc.value
+    const idColor = (pr + pg + pb) / 3 < 100 ? '#ffffff' : '#111111'
     doc.fontSize(7).fillColor(idColor)
        .text(`#${p.id}`, x + 2, y + TEXT_Y_ID, { width: cellW - 4, align: 'center' })
 
@@ -146,9 +135,9 @@ export function generateCalibrationPDF(printer, patches, outputStream) {
     rowData.forEach((val, ci) => {
       const cw = COL_WIDTHS[ci]
       if (ci === 7 && !isHeader) {
-        // Swatch column
-        const [r,g,b] = typeof val === 'object' ? val : [220,220,220]
-        doc.rect(cx + 1, ty + 2, cw - 2, ROW_H - 4).fillColor([r,g,b]).fill()
+        // Swatch column — val is { mode, value } from swatchColour()
+        const colour = (val && val.value) ? val.value : [0, 0, 0, 0]
+        doc.rect(cx + 1, ty + 2, cw - 2, ROW_H - 4).fillColor(colour).fill()
       } else {
         doc.fontSize(isHeader ? 7 : 7)
            .fillColor(isHeader ? '#333333' : '#111111')
@@ -171,8 +160,8 @@ export function generateCalibrationPDF(printer, patches, outputStream) {
       drawTableRow(COL_HEADERS, TABLE_Y, true)
     }
     const ty = TABLE_Y + ROW_H + rowOnPage * ROW_H
-    const swatchRgb = cmykogToApproxRgb(p.c, p.m, p.y, p.k, p.o, p.g)
-    drawTableRow([p.id, p.c||'', p.m||'', p.y||'', p.k||'', p.o||'', p.g||'', swatchRgb, '', '', ''], ty)
+    const sc2 = swatchColour(p.c, p.m, p.y, p.k, p.o, p.g)
+    drawTableRow([p.id, p.c||'', p.m||'', p.y||'', p.k||'', p.o||'', p.g||'', sc2, '', '', ''], ty)
   })
 
   doc.end()

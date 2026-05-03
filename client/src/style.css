@@ -495,6 +495,53 @@ input[type="number"]::-webkit-inner-spin-button { opacity: .4; }
 }
 .mode-btn.active strong { color: var(--accent); }
 
+/* ── Scan mode ───────────────────────────────────────────────────────── */
+.scan-toolbar {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .6rem .9rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  margin-bottom: .75rem;
+  font-size: 13px;
+}
+.scan-indicator {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+#scan-counter {
+  font-weight: 700;
+  font-family: monospace;
+  font-size: 15px;
+  color: var(--text);
+}
+#scan-status {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+}
+.cal-table tbody tr.scan-active td {
+  background: #dbeafe;
+}
+.cal-table tbody tr.scan-active {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+.cal-table tbody tr.scan-active input[type="number"] {
+  border-color: var(--accent);
+  background: #fff;
+}
+#btn-start-scan.scanning {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #eff6ff;
+}
+
 /* ── Chart upload slots ──────────────────────────────────────────────── */
 .chart-upload-grid {
   display: grid;

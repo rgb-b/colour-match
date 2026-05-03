@@ -185,8 +185,20 @@
         <div class="card-header-row">
           <h2>Patch Measurements</h2>
           <div style="display:flex;gap:.5rem;align-items:center">
+            <button class="btn-ghost btn-sm" id="btn-start-scan">▶ Scan</button>
             <button class="btn-ghost btn-sm" id="btn-clear-cal">Clear</button>
             <a class="btn-primary btn-sm" id="btn-download-pdf" href="#" style="text-decoration:none;text-align:center">↓ Chart PDF</a>
+          </div>
+        </div>
+
+        <!-- Scan mode toolbar — hidden until scanning starts -->
+        <div id="scan-toolbar" class="scan-toolbar" style="display:none">
+          <span class="scan-indicator">● SCANNING</span>
+          <span id="scan-counter">Patch 1 of 96</span>
+          <span id="scan-status"></span>
+          <div style="margin-left:auto;display:flex;gap:.5rem">
+            <button class="btn-ghost btn-sm" id="btn-scan-skip">Skip</button>
+            <button class="btn-ghost btn-sm" id="btn-scan-stop">■ Stop</button>
           </div>
         </div>
 
