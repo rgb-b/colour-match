@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { run, get, all } from '../db.js'
 import patches from '../calibrationPatches.js'
-import deltaE2000 from '../deltaE.js'
+import { deltaE2000 } from '../deltaE.js'
 import { generateCalibrationPDF } from '../pdfChart.js'
 import multer from 'multer'
 import { existsSync } from 'fs'
