@@ -170,7 +170,8 @@ router.get('/:printerId/:mode/pdf', validateMode, async (req, res) => {
   if (existsSync(chartFile)) {
     res.sendFile(chartFile)
   } else {
-    generateCalibrationPDF({ ...printer, modeLabel: modeLabels[mode] }, patches, res)
+    const pdfBytes = await generateCalibrationPDF({ ...printer, modeLabel: modeLabels[mode] }, patches)
+    res.send(Buffer.from(pdfBytes))
   }
 })
 
