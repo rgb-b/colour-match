@@ -6,3 +6,4 @@ node_modules/
 CLAUDE.md
 .claude/
 PLAN.md
+data/charts/*.pdf
