@@ -50,13 +50,10 @@ const patches = [
   patch(25,25,25,25), patch(50,50,50,50),
   patch(10,10,10,50), patch(0,0,0,0),   // paper white included for reference
 
-  // ── Common spot-colour territories ───────────────────────────────────────
+  // ── Common spot-colour territories (two-ink combos — singles covered above) ─
   patch(0,100,100,0),   // red
   patch(100,0,100,0),   // blue/purple
   patch(100,100,0,0),   // blue
-  patch(0,100,0,0),     // pure magenta
-  patch(0,0,100,0),     // pure yellow
-  patch(100,0,0,0),     // pure cyan
 ]
 
 // Assign sequential IDs
