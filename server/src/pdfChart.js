@@ -1,16 +1,17 @@
 import PDFDocument from 'pdfkit'
 
-const MM = 72 / 25.4  // points per mm
+const MM = 72 / 25.4
 
-// Approximate CMYKOG → RGB — used for O/G patches and text contrast calculation.
-function swatchRgb(c, m, y, k, o, g) {
-  const mc = Math.min(100, m + o * 0.6)
-  const yc = Math.min(100, y + o * 0.4 + g * 0.3)
-  const cc = Math.min(100, c + g * 0.7)
+// CMYK → approximate RGB for screen rendering (visual guide only).
+// All values 0-100 in, 0-255 out.
+function cmykToRgb(c, m, y, k) {
+  const r = Math.round(255 * (1 - c/100) * (1 - k/100))
+  const g = Math.round(255 * (1 - m/100) * (1 - k/100))
+  const b = Math.round(255 * (1 - y/100) * (1 - k/100))
   return [
-    Math.max(0, Math.min(255, Math.round(255 * (1 - cc/100) * (1 - k/100)))),
-    Math.max(0, Math.min(255, Math.round(255 * (1 - mc/100) * (1 - k/100)))),
-    Math.max(0, Math.min(255, Math.round(255 * (1 - yc/100) * (1 - k/100)))),
+    Math.max(0, Math.min(255, r)),
+    Math.max(0, Math.min(255, g)),
+    Math.max(0, Math.min(255, b)),
   ]
 }
 
@@ -20,45 +21,40 @@ function recipeLabel(p) {
   if (p.m > 0) parts.push(`M${p.m}`)
   if (p.y > 0) parts.push(`Y${p.y}`)
   if (p.k > 0) parts.push(`K${p.k}`)
-  if (p.o > 0) parts.push(`O${p.o}`)
-  if (p.g > 0) parts.push(`G${p.g}`)
   return parts.join(' ') || 'PAPER'
 }
 
-// True for patches that can be represented exactly in CMYK
-const isCmykOnly = p => p.o === 0 && p.g === 0
-
 export function generateCalibrationPDF(printer, patches, outputStream) {
-  const COLS   = 12
-  const ROWS   = Math.ceil(patches.length / COLS)
+  const COLS  = 12
+  const ROWS  = Math.ceil(patches.length / COLS)
 
-  const MARGIN  = 14 * MM
-  const HEADER  = 26
-  const CELL_W  = (560 * MM - MARGIN * 2) / COLS
-  const CELL_H  = Math.round(CELL_W * 0.76)
-  const PAGE_W  = 560 * MM
-  const PAGE_H  = MARGIN + HEADER + (CELL_H * ROWS) + MARGIN + 18  // +18 for legend
+  const MARGIN = 14 * MM
+  const HEADER = 26
+  const CELL_W = (560 * MM - MARGIN * 2) / COLS
+  const CELL_H = Math.round(CELL_W * 0.76)
+  const PAGE_W = 560 * MM
+  const PAGE_H = MARGIN + HEADER + CELL_H * ROWS + MARGIN
 
   const GRID_Y   = MARGIN + HEADER
-  const SWATCH_H = Math.round(CELL_H * 0.60)
+  const SWATCH_H = Math.round(CELL_H * 0.55)
 
   const doc = new PDFDocument({ size: [PAGE_W, PAGE_H], margin: 0, autoFirstPage: true })
   doc.pipe(outputStream)
 
   // ── Header ───────────────────────────────────────────────────────────────
-  doc.fontSize(10).fillColor([0, 0, 0, 1])  // CMYK black
+  doc.fontSize(10).fillColor('#111111')
      .text(
        `Calibration Chart — ${printer.name}${printer.modeLabel ? ' · ' + printer.modeLabel : ''}`,
-       MARGIN, MARGIN, { width: PAGE_W * 0.6 }
+       MARGIN, MARGIN, { width: PAGE_W * 0.65 }
      )
-  doc.fontSize(8).fillColor([0, 0, 0, 0.6])
+  doc.fontSize(8).fillColor('#888888')
      .text(
-       `${new Date().toLocaleDateString('en-AU')}  ·  ${patches.length} patches`,
+       `${new Date().toLocaleDateString('en-AU')}  ·  ${patches.length} patches  ·  Swatches are approximate — use numeric values for printing`,
        MARGIN, MARGIN + 2,
        { align: 'right', width: PAGE_W - MARGIN * 2 }
      )
   doc.moveTo(MARGIN, MARGIN + 18).lineTo(PAGE_W - MARGIN, MARGIN + 18)
-     .lineWidth(0.4).strokeColor([0, 0, 0, 0.15]).stroke()
+     .lineWidth(0.4).strokeColor('#cccccc').stroke()
 
   // ── Patch grid ───────────────────────────────────────────────────────────
   patches.forEach((p, i) => {
@@ -67,53 +63,30 @@ export function generateCalibrationPDF(printer, patches, outputStream) {
     const x   = MARGIN + col * CELL_W
     const y   = GRID_Y + row * CELL_H
 
-    const [r, g, b] = swatchRgb(p.c, p.m, p.y, p.k, p.o, p.g)
+    const [r, g, b] = cmykToRgb(p.c, p.m, p.y, p.k)
 
-    // Light grey cell background — ensures near-white patches are visible
-    doc.rect(x + 1, y + 1, CELL_W - 2, CELL_H - 2)
-       .fillColor([0, 0, 0, 0.04])
-       .fill()
+    // Light grey cell background — makes near-white patches visible
+    doc.rect(x + 0.5, y + 0.5, CELL_W - 1, CELL_H - 1)
+       .fillColor('#f0f0f0').fill()
 
-    // Swatch — device CMYK for pure CMYK patches, RGB approx for O/G
-    if (isCmykOnly(p)) {
-      doc.rect(x + 1, y + 1, CELL_W - 2, SWATCH_H)
-         .fillColor([p.c / 100, p.m / 100, p.y / 100, p.k / 100])
-         .fill()
-    } else {
-      doc.rect(x + 1, y + 1, CELL_W - 2, SWATCH_H)
-         .fillColor([r, g, b])
-         .fill()
-    }
+    // Colour swatch (approximate RGB — visual guide only)
+    doc.rect(x + 1, y + 1, CELL_W - 2, SWATCH_H - 1)
+       .fillColor([r, g, b]).fill()
 
     // Cell border
-    doc.rect(x + 1, y + 1, CELL_W - 2, CELL_H - 2)
-       .lineWidth(0.3).strokeColor([0, 0, 0, 0.18]).stroke()
+    doc.rect(x + 0.5, y + 0.5, CELL_W - 1, CELL_H - 1)
+       .lineWidth(0.3).strokeColor('#cccccc').stroke()
 
-    // Extended-gamut indicator — dashed top border for O/G patches
-    if (!isCmykOnly(p)) {
-      doc.moveTo(x + 1, y + 1).lineTo(x + CELL_W - 1, y + 1)
-         .lineWidth(1.2).strokeColor([0, 0.55, 1, 0]).dash(3, { space: 2 }).stroke()
-      doc.undash()
-    }
-
-    // Patch ID — white on dark, dark on light
+    // Patch ID
     const bright = (r + g + b) / 3
-    const textColor = bright < 110 ? [0, 0, 0, 0] : [0, 0, 0, 1]  // CMYK white or black
-    doc.fontSize(7).fillColor(textColor)
-       .text(`#${p.id}`, x + 2, y + SWATCH_H + 2, { width: CELL_W - 4, align: 'center' })
+    const idColor = bright < 120 ? '#ffffff' : '#333333'
+    doc.fontSize(6.5).fillColor(idColor)
+       .text(`#${p.id}`, x + 2, y + SWATCH_H - 11, { width: CELL_W - 4, align: 'center' })
 
-    // Recipe label
-    doc.fontSize(5).fillColor([0, 0, 0, 0.75])
-       .text(recipeLabel(p), x + 1, y + SWATCH_H + 13, { width: CELL_W - 2, align: 'center' })
+    // CMYK recipe — primary information, clearly readable
+    doc.fontSize(5.5).fillColor('#222222')
+       .text(recipeLabel(p), x + 1, y + SWATCH_H + 3, { width: CELL_W - 2, align: 'center' })
   })
-
-  // ── Legend ───────────────────────────────────────────────────────────────
-  const legendY = GRID_Y + ROWS * CELL_H + 6
-  doc.fontSize(6.5).fillColor([0, 0, 0, 0.5])
-     .text(
-       '── Solid border: device CMYK (exact values)    ╌ ╌ Dashed border: extended gamut O/G patch (approximate RGB — enter values in Flexpack manually)',
-       MARGIN, legendY, { width: PAGE_W - MARGIN * 2 }
-     )
 
   doc.end()
 }
