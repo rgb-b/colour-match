@@ -90,6 +90,19 @@ printerSelect.addEventListener('change', () => {
 })
 
 // ── Match view ────────────────────────────────────────────────────────────
+let activeMatchMode = 'surface'
+
+document.querySelectorAll('.match-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.match-mode-btn').forEach(b => b.classList.remove('active'))
+    btn.classList.add('active')
+    activeMatchMode = btn.dataset.mode
+    // Re-run suggestion if target LAB is already filled
+    const l = parseFloat(targetL.value), a = parseFloat(targetA.value), b = parseFloat(targetB.value)
+    if (!isNaN(l) && !isNaN(a) && !isNaN(b)) suggestRecipe(l, a, b)
+  })
+})
+
 const jobNameInput    = document.getElementById('job-name')
 const targetL         = document.getElementById('target-l')
 const targetA         = document.getElementById('target-a')
@@ -103,6 +116,19 @@ const resultSwatch    = document.getElementById('result-swatch')
 
 // Live swatch updates
 ;[targetL, targetA, targetB].forEach(el => el.addEventListener('input', updateTargetSwatch))
+
+// Tab/Enter on target-b → auto-suggest compensated recipe from calibration data
+targetB.addEventListener('keydown', async e => {
+  if (e.key === 'Tab' || e.key === 'Enter') {
+    const l = parseFloat(targetL.value), a = parseFloat(targetA.value), b = parseFloat(targetB.value)
+    if (!isNaN(l) && !isNaN(a) && !isNaN(b)) {
+      e.preventDefault()
+      await suggestRecipe(l, a, b)
+      // Move focus to job name if empty, otherwise to Log Attempt
+      if (!jobNameInput.value.trim()) jobNameInput.focus()
+    }
+  }
+})
 ;[document.getElementById('result-l'), document.getElementById('result-a'), document.getElementById('result-b')]
   .forEach(el => el.addEventListener('input', updateResultSwatch))
 
@@ -117,6 +143,50 @@ function updateResultSwatch() {
   const b = parseFloat(document.getElementById('result-b').value)
   if (!isNaN(l) && !isNaN(a) && !isNaN(b))
     resultSwatch.style.background = labToRgb(l, a, b)
+}
+
+// ── Calibration-based recipe suggestion ───────────────────────────────────
+// Calls the inverse lookup endpoint, fills CMYKOG fields with compensated values.
+async function suggestRecipe(l, a, b) {
+  const panel = document.getElementById('suggestion-panel')
+  if (!state.activePrinterId) return
+
+  panel.className = 'suggestion-panel sug-warn'
+  panel.style.display = 'flex'
+  panel.innerHTML = '<span class="sug-label">Looking up calibration data…</span>'
+
+  const result = await api.post(
+    `/api/calibration/${state.activePrinterId}/${activeMatchMode}/suggest`,
+    { target_l: l, target_a: a, target_b: b }
+  )
+
+  if (result.warning === 'insufficient_calibration') {
+    panel.className = 'suggestion-panel sug-warn'
+    panel.innerHTML = `
+      <span class="sug-label">⚠ Calibration incomplete</span>
+      <span class="sug-meta">${result.patches_measured} of ${result.patches_needed} minimum patches measured for ${activeMatchMode} mode — enter recipe manually or complete calibration first</span>
+    `
+    return
+  }
+
+  if (result.error) {
+    panel.className = 'suggestion-panel sug-warn'
+    panel.innerHTML = `<span class="sug-label">Could not generate suggestion</span>`
+    return
+  }
+
+  // Fill CMYKOG fields
+  ;['c','m','y','k','o','g'].forEach(ch => {
+    document.getElementById(`ch-${ch}`).value = result[ch]
+  })
+
+  const confLabel = { high: '● High', medium: '◑ Medium', low: '○ Low' }[result.confidence]
+  const modeLabel = { surface: 'Surface', reverse: 'Reverse', cbw: 'CBW' }[activeMatchMode]
+  panel.className = `suggestion-panel sug-${result.confidence}`
+  panel.innerHTML = `
+    <span class="sug-label">Calibration suggestion · ${modeLabel}</span>
+    <span class="sug-meta">Confidence: ${confLabel} · Nearest patch ΔE ${result.closest_de} · ${result.patches_used} patches used</span>
+  `
 }
 
 btnNewJob.addEventListener('click', async () => {
@@ -151,6 +221,7 @@ btnCancelJob.addEventListener('click', () => {
   ;['ch-c','ch-m','ch-y','ch-k','ch-o','ch-g','result-l','result-a','result-b','attempt-notes']
     .forEach(id => document.getElementById(id).value = id.startsWith('ch') ? '0' : '')
   resultSwatch.style.background = ''
+  document.getElementById('suggestion-panel').style.display = 'none'
 })
 
 btnLogAttempt.addEventListener('click', async () => {

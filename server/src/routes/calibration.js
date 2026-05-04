@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { run, get, all } from '../db.js'
 import patches from '../calibrationPatches.js'
+import deltaE2000 from '../deltaE.js'
 import { generateCalibrationPDF } from '../pdfChart.js'
 import multer from 'multer'
 import { existsSync } from 'fs'
@@ -95,6 +96,62 @@ router.delete('/:printerId/:mode/patches', validateMode, async (req, res) => {
     [req.params.printerId, req.params.mode]
   )
   res.json({ ok: true })
+})
+
+// ── Suggest compensated CMYKOG recipe from calibration data ───────────────
+// Weighted nearest-neighbour inverse lookup:
+// finds calibration patches whose *measured* LAB is closest to the target,
+// then weighted-averages their *sent* CMYKOG values.
+// This compensates for the Roland's systematic deviation from theoretical values.
+router.post('/:printerId/:mode/suggest', validateMode, async (req, res) => {
+  const { printerId, mode } = req.params
+  const { target_l, target_a, target_b } = req.body
+
+  if (target_l == null || target_a == null || target_b == null)
+    return res.status(400).json({ error: 'target_l, target_a, target_b required' })
+
+  const measured = await all(
+    `SELECT * FROM calibration_patches
+     WHERE printer_id = ? AND print_mode = ? AND measured_l IS NOT NULL`,
+    [printerId, mode]
+  )
+
+  const MIN_PATCHES = 20
+  if (measured.length < MIN_PATCHES) {
+    return res.json({
+      warning: 'insufficient_calibration',
+      patches_measured: measured.length,
+      patches_needed: MIN_PATCHES,
+    })
+  }
+
+  const target = { L: target_l, a: target_a, b: target_b }
+
+  // Compute ΔE2000 between target and each patch's *measured* LAB
+  const ranked = measured
+    .map(p => ({ ...p, de: deltaE2000(target, { L: p.measured_l, a: p.measured_a, b: p.measured_b }) }))
+    .sort((a, b) => a.de - b.de)
+
+  // Use up to 8 closest patches within ΔE 35; always use at least 3
+  let candidates = ranked.filter(p => p.de < 35).slice(0, 8)
+  if (candidates.length < 3) candidates = ranked.slice(0, 3)
+
+  // Weighted average of sent CMYKOG (weight = 1/ΔE, floor 0.5 to avoid div-by-zero)
+  const totalWeight = candidates.reduce((s, p) => s + 1 / Math.max(p.de, 0.5), 0)
+  const suggested = {}
+  for (const ch of ['c', 'm', 'y', 'k', 'o', 'g']) {
+    const raw = candidates.reduce((s, p) => s + (1 / Math.max(p.de, 0.5)) * p[ch], 0) / totalWeight
+    suggested[ch] = Math.min(100, Math.max(0, Math.round(raw * 10) / 10))
+  }
+
+  const closestDE = ranked[0].de
+  res.json({
+    ...suggested,
+    confidence:       closestDE < 5 ? 'high' : closestDE < 15 ? 'medium' : 'low',
+    closest_de:       Math.round(closestDE * 100) / 100,
+    patches_used:     candidates.length,
+    patches_measured: measured.length,
+  })
 })
 
 // ── Download PDF chart — serves uploaded file if present, else generated ──
